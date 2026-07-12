@@ -1,0 +1,77 @@
+:root{
+  --blue:#2B4BC9; --blue-deep:#1D34A0; --pink:#FF7BAC; --pink-soft:#FFD9E6;
+  --yellow:#FFC400; --ink:#221E29; --paper:#FDF9F4;
+  --round-font:'M PLUS Rounded 1c','Hiragino Maru Gothic ProN','ヒラギノ丸ゴ ProN','Yu Gothic UI',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{
+  font-family:var(--round-font); background:var(--blue); color:var(--ink);
+  background-image:radial-gradient(rgba(255,255,255,.14) 12%, transparent 13%);
+  background-size:28px 28px; min-height:100vh; padding:14px 12px 40px;
+}
+.app{max-width:520px;margin:0 auto}
+header{color:#fff;text-align:center;margin-bottom:12px}
+header h1{font-weight:900;font-size:clamp(22px,6vw,30px);letter-spacing:.06em;
+  text-shadow:0 3px 0 var(--blue-deep)}
+header h1 .accent{color:var(--yellow)}
+header p{font-size:12px;opacity:.9;margin-top:2px}
+
+.card{background:var(--paper);border-radius:22px;padding:14px;box-shadow:0 6px 0 var(--blue-deep);margin-bottom:14px}
+
+.stage-wrap{position:relative}
+canvas#stage{width:100%;height:auto;border-radius:16px;border:3px dashed var(--pink);
+  background:#fff;display:block;touch-action:none;cursor:grab}
+.hint{font-size:11px;color:#8a7f90;text-align:center;margin-top:6px}
+
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.section-label{font-weight:900;font-size:13px;color:var(--blue);
+  display:flex;align-items:center;gap:6px;margin:10px 0 6px}
+.section-label::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--pink)}
+
+.chip{border:none;font-family:inherit;font-weight:900;font-size:13px;
+  padding:8px 12px;border-radius:999px;background:#fff;color:var(--blue);
+  box-shadow:0 3px 0 #d9d2e6;cursor:pointer;transition:transform .06s}
+.chip:active{transform:translateY(3px);box-shadow:none}
+.chip.on{background:var(--yellow);color:var(--ink);box-shadow:0 3px 0 #c79700}
+
+input[type=text]{flex:1;min-width:140px;font-family:inherit;font-weight:700;font-size:16px;
+  padding:10px 12px;border-radius:14px;border:2px solid var(--pink-soft);background:#fff}
+input[type=text]:focus{outline:none;border-color:var(--pink)}
+
+.ctrl{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:#5a5266}
+input[type=range]{flex:1;accent-color:var(--pink)}
+input[type=color]{width:36px;height:36px;border:none;border-radius:10px;background:none;padding:0;cursor:pointer}
+
+.toggle{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:900;color:var(--blue);
+  background:#fff;border-radius:999px;padding:7px 12px;box-shadow:0 3px 0 #d9d2e6;cursor:pointer;user-select:none}
+.toggle input{accent-color:var(--pink);width:16px;height:16px}
+
+.btn{border:none;font-family:inherit;font-weight:900;font-size:14px;letter-spacing:.04em;
+  padding:13px 16px;border-radius:16px;cursor:pointer;width:100%;transition:transform .06s}
+.btn:active{transform:translateY(3px);box-shadow:none!important}
+.btn.upload{background:var(--pink);color:#fff;box-shadow:0 4px 0 #d1487f}
+.btn.dl{background:var(--yellow);color:var(--ink);box-shadow:0 4px 0 #c79700;margin-top:8px}
+.btn.dl.sub{background:#fff;color:var(--blue);box-shadow:0 4px 0 #d9d2e6}
+.btn-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.btn-grid.three{grid-template-columns:repeat(3,1fr)}
+.btn-grid.three .btn{padding:10px 6px;font-size:12.5px;line-height:1.4;margin-top:0}
+canvas#stage:active{cursor:grabbing}
+
+/* PC: キャンバスを左、コントロール・保存を右の2カラム */
+@media (min-width: 900px){
+  .app{
+    max-width:1080px;
+    display:grid;
+    grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);
+    grid-template-areas:
+      "header header"
+      "stage  controls"
+      "stage  save";
+    column-gap:20px;
+    align-items:start;
+  }
+  header{grid-area:header}
+  .stage-card{grid-area:stage;position:sticky;top:14px}
+  .controls-card{grid-area:controls}
+  .save-card{grid-area:save}
+}

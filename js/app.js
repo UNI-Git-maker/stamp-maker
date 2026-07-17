@@ -3,8 +3,9 @@ const $ = id => document.getElementById(id);
 const stage = $('stage'), ctx = stage.getContext('2d');
 
 // 論理座標系は幅1024固定。スタンプ比率(370:320)時の論理高さ
-const STAMP_H = Math.round(1024 * 320 / 370); // 885
+const STAMP_H = Math.round(1024 * 320 / 370); // 886
 const MARGIN = Math.round(10 * 1024 / 370);   // LINE推奨余白10px相当
+const FEATHER = 48; // 透過フェザー帯幅(白フチ/ハロー残り対策のため広めに)
 
 // かざり: 種類ごとの描画サイズとヒット判定半径
 const DECO_TYPES = {
@@ -21,7 +22,7 @@ const state = {
   colorA:'#FF7BAC', colorB:'#FFC400',
   size:160, ...DEFAULT_TEXT_POS,
   decos: defaultDecos(),
-  transparent:false, threshold:232, bgColor:'#FFFFFF',
+  transparent:false, tolerance:23, bgPaint:true, bgColor:'#FFFFFF',
   imgScale:0.92, imgX:98, imgY:50,
   guide:false
 };
@@ -64,15 +65,20 @@ $('size').addEventListener('input', e=>{ state.size=+e.target.value; render(); }
 $('transparent').addEventListener('change', e=>{
   state.transparent=e.target.checked;
   $('thresholdCtrl').hidden=!state.transparent;
-  $('bgColorCtrl').hidden=state.transparent; // 透過中は背景色が効かないため隠す
   processImage(); render();
+});
+$('bgPaint').addEventListener('change', e=>{
+  state.bgPaint=e.target.checked;
+  $('bgColorCtrl').hidden=!state.bgPaint;
+  render();
 });
 $('bgColor').addEventListener('input', e=>{ state.bgColor=e.target.value; render(); });
 
 // しきい値はドラッグ中に連打されるためフレーム単位に間引く
 let thrPending=false;
 $('threshold').addEventListener('input', e=>{
-  state.threshold=+e.target.value;
+  // スライダーは透過の強さ0-100。背景色との許容距離へ変換(0→最弱、100→最強、26→23。従来の白しきい値232相当)
+  state.tolerance=Math.round(+e.target.value*0.9);
   if(thrPending) return;
   thrPending=true;
   requestAnimationFrame(()=>{ thrPending=false; processImage(); render(); });
@@ -137,34 +143,67 @@ function prepareSource(img){
   return c;
 }
 
-// ---- white background removal (edge flood fill + feathering) ----
-function processImage(){
-  if(!state.img){ state.imgProcessed=null; return; }
-  if(!state.transparent){ state.imgProcessed=state.img; return; }
-  const src=state.img;
+// ---- background removal (edge flood fill + feathering) ----
+// 画像/canvasの外周2pxの枠を4画素おきにサンプリングし、最頻色(背景色)を{r,g,b}で返す
+function detectBgColor(src){
+  const w=src.width, h=src.height;
+  const c=document.createElement('canvas'); c.width=w; c.height=h;
+  const cx=c.getContext('2d'); cx.drawImage(src,0,0);
+  const p=cx.getImageData(0,0,w,h).data;
+  const buckets=new Map(); // 32階調バケットkey → {n,r,g,b} 実RGBの合計
+  const sample=(x,y)=>{
+    const i=(y*w+x)*4;
+    const r=p[i], g=p[i+1], b=p[i+2];
+    const key=(r>>5)<<10 | (g>>5)<<5 | (b>>5);
+    let e=buckets.get(key);
+    if(!e){ e={n:0,r:0,g:0,b:0}; buckets.set(key,e); }
+    e.n++; e.r+=r; e.g+=g; e.b+=b;
+  };
+  for(let x=0;x<w;x+=4){ for(let t=0;t<2;t++){ sample(x, t); sample(x, h-1-t); } }
+  for(let y=0;y<h;y+=4){ for(let t=0;t<2;t++){ sample(t, y); sample(w-1-t, y); } }
+  let best=null;
+  buckets.forEach(e=>{ if(!best||e.n>best.n) best=e; });
+  if(!best) return {r:255,g:255,b:255}; // サンプル無し(極小画像)は白扱い
+  return { r:Math.round(best.r/best.n), g:Math.round(best.g/best.n), b:Math.round(best.b/best.n) };
+}
+// 背景色bgを透過した加工済みcanvasを返す純関数(stateに依存しない)。bg省略時は自動判定
+function makeTransparent(src, tolerance, bg){
+  if(!bg) bg=detectBgColor(src);
   const w=src.width, h=src.height;
   const c=document.createElement('canvas'); c.width=w; c.height=h;
   const cx=c.getContext('2d'); cx.drawImage(src,0,0);
   const d=cx.getImageData(0,0,w,h), p=d.data;
-  const hi=state.threshold, lo=hi-28; // hi以上は完全透過、lo〜hiは段階的に(白フリンジ対策)
+  const barrier=tolerance+FEATHER; // 背景色との距離がこれ以上なら被写体とみなしfloodを止める
   const seen=new Uint8Array(w*h); const stack=[];
-  for(let x=0;x<w;x++){ stack.push(x, (h-1)*w+x); }
-  for(let y=0;y<h;y++){ stack.push(y*w, y*w+w-1); }
+  // push時に境界とseenを確認しseenを立てる(同一画素の多重pushを防ぎスタック肥大を抑制)
+  const push=idx=>{ if(idx<0||idx>=w*h||seen[idx]) return; seen[idx]=1; stack.push(idx); };
+  for(let x=0;x<w;x++){ push(x); push((h-1)*w+x); }
+  for(let y=0;y<h;y++){ push(y*w); push(y*w+w-1); }
   while(stack.length){
     const idx=stack.pop();
-    if(idx<0||idx>=w*h||seen[idx]) continue;
-    seen[idx]=1;
     const i=idx*4;
-    const wn=Math.min(p[i],p[i+1],p[i+2]);
-    if(wn<=lo) continue;
-    p[i+3] = wn>=hi ? 0 : Math.round(p[i+3]*(hi-wn)/(hi-lo));
+    // 背景色とのチェビシェフ距離
+    const dist=Math.max(Math.abs(p[i]-bg.r), Math.abs(p[i+1]-bg.g), Math.abs(p[i+2]-bg.b));
+    if(dist>=barrier) continue; // 障壁(背景から遠い=被写体)
+    p[i+3] = dist<=tolerance ? 0 : Math.round(p[i+3]*(dist-tolerance)/FEATHER); // 近い順に完全透過→フェザー
     const x=idx%w;
-    stack.push(idx-w, idx+w);
-    if(x>0) stack.push(idx-1);
-    if(x<w-1) stack.push(idx+1);
+    push(idx-w); push(idx+w);
+    if(x>0) push(idx-1);
+    if(x<w-1) push(idx+1);
   }
   cx.putImageData(d,0,0);
-  state.imgProcessed=c; // canvasのままdrawImageのソースに使う(非同期レース回避)
+  return c; // canvasのままdrawImageのソースに使う(非同期レース回避)
+}
+function processImage(){
+  if(!state.img){ state.imgProcessed=null; return; }
+  if(!state.transparent){ state.imgProcessed=state.img; return; }
+  const bg=detectBgColor(state.img);
+  state.imgProcessed=makeTransparent(state.img, state.tolerance, bg);
+  updateBgSwatch(bg);
+}
+// 自動判定した背景色を判定色スウォッチに反映(thresholdCtrl内なので透過ON時のみ見える)
+function updateBgSwatch(bg){
+  $('bgDetected').style.background=`rgb(${bg.r},${bg.g},${bg.b})`;
 }
 
 // ---- drawing ----
@@ -172,14 +211,14 @@ const FONT = "'M PLUS Rounded 1c','Hiragino Maru Gothic ProN','Yu Gothic UI',san
 function chars(){ return [...state.text]; }
 function step(){ return state.size*1.02; }
 
-function drawScene(cctx, W, H, bg){
+function drawScene(cctx, W, H, bg, imgOverride){
   cctx.clearRect(0,0,W,H);
   if(bg==='color'){ cctx.fillStyle=state.bgColor; cctx.fillRect(0,0,W,H); }
   else if(bg==='checker'){ drawChecker(cctx,W,H); }
   cctx.imageSmoothingEnabled=true;
   cctx.imageSmoothingQuality='high';
   const k=W/1024;
-  const img=state.imgProcessed||state.img;
+  const img=imgOverride||state.imgProcessed||state.img;
   if(img){
     const s=Math.min(W/img.width, H/img.height)*state.imgScale;
     const iw=img.width*s, ih=img.height*s;
@@ -290,13 +329,14 @@ function drawGuide(){
 }
 
 function render(){
-  drawScene(ctx, stage.width, stage.height, state.transparent?'checker':'color');
+  drawScene(ctx, stage.width, stage.height, state.bgPaint?'color':'checker');
   if(state.guide) drawGuide();
 }
 
 // ---- drag (文字・かざりを個別に移動、かざりはダブルタップで削除) ----
 let drag=null;
 let lastTap={t:0,x:0,y:0};
+let downInfo={t:0,x:0,y:0}; // pointerdown時刻・位置。pointerupでタップ確定を判定するのに使う
 const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
 
 function pos(e){
@@ -324,12 +364,11 @@ stage.addEventListener('pointerdown', e=>{
   const p=pos(e);
   const now=performance.now();
   const idx=hitDeco(p);
-  // ダブルタップ(350ms以内・近距離)でかざりを削除
+  downInfo={t:now,x:p.x,y:p.y};
+  // ダブルタップ(前回タップから350ms以内・近距離)でかざりを削除。lastTapはpointerupで記録する
   if(now-lastTap.t<350 && Math.hypot(p.x-lastTap.x,p.y-lastTap.y)<60){
     lastTap={t:0,x:0,y:0};
     if(idx>=0){ state.decos.splice(idx,1); render(); return; }
-  } else {
-    lastTap={t:now,x:p.x,y:p.y};
   }
   if(idx>=0){
     const d=state.decos[idx];
@@ -349,9 +388,17 @@ stage.addEventListener('pointermove', e=>{
   else { state.x=nx; state.y=ny; }
   render();
 });
-const endDrag=()=>drag=null;
-stage.addEventListener('pointerup', endDrag);
-stage.addEventListener('pointercancel', endDrag);
+stage.addEventListener('pointerup', e=>{
+  const p=pos(e);
+  // 短時間・小移動ならタップ確定としてlastTapを記録。ドラッグならリセット(誤削除防止)
+  if(performance.now()-downInfo.t<350 && Math.hypot(p.x-downInfo.x,p.y-downInfo.y)<12){
+    lastTap={t:performance.now(),x:p.x,y:p.y};
+  } else {
+    lastTap={t:0,x:0,y:0};
+  }
+  drag=null;
+});
+stage.addEventListener('pointercancel', ()=>{ drag=null; downInfo={t:0,x:0,y:0}; });
 
 // ---- export ----
 function safeName(){
@@ -362,27 +409,54 @@ async function ensureFont(){
 }
 function download(canvas,name){
   canvas.toBlob(b=>{
+    if(!b){ alert('画像の書き出しに失敗しました。'); return; }
     const a=document.createElement('a');
     a.href=URL.createObjectURL(b); a.download=name; a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),1000);
   },'image/png');
 }
 // 2倍で描いてから縮小(輪郭を滑らかに)
-async function exportPNG(w,h,bg,name){
+// forceTransparent: 透過OFFでも書き出し時だけ背景を自動判定して透過して描く(LINE用)
+async function exportPNG(w,h,bg,name,forceTransparent=false){
   await ensureFont();
+  const imgOverride = (forceTransparent && !state.transparent && state.img)
+    ? makeTransparent(state.img, state.tolerance) : null;
   const big=document.createElement('canvas'); big.width=w*2; big.height=h*2;
-  drawScene(big.getContext('2d'), w*2, h*2, bg);
+  drawScene(big.getContext('2d'), w*2, h*2, bg, imgOverride);
   const c=document.createElement('canvas'); c.width=w; c.height=h;
   const cctx=c.getContext('2d');
   cctx.imageSmoothingQuality='high';
   cctx.drawImage(big,0,0,w,h);
   download(c,name);
 }
-// LINE用はガイドライン(透過PNG必須)に合わせて常に透過で書き出す
-$('dlStamp').addEventListener('click', ()=>exportPNG(370,320,'none',`${safeName()}-370x320.png`));
-$('dlMain').addEventListener('click', ()=>exportPNG(240,240,'none',`${safeName()}-main240.png`));
-$('dlTab').addEventListener('click', ()=>exportPNG(96,74,'none',`${safeName()}-tab96x74.png`));
-$('dlFull').addEventListener('click', ()=>exportPNG(1024,1024, state.transparent?'none':'color', `${safeName()}-1024.png`));
+// LINE用は元背景を常に自動除去し、仕上がり背景は「色を塗る」設定に従う(OFFなら透過PNG)
+const saveBg=()=>state.bgPaint?'color':'none';
+$('dlStamp').addEventListener('click', ()=>exportPNG(370,320,saveBg(),`${safeName()}-370x320.png`,true));
+$('dlMain').addEventListener('click', ()=>exportPNG(240,240,saveBg(),`${safeName()}-main240.png`,true));
+$('dlTab').addEventListener('click', ()=>exportPNG(96,74,saveBg(),`${safeName()}-tab96x74.png`,true));
+$('dlFull').addEventListener('click', ()=>exportPNG(1024,1024, saveBg(), `${safeName()}-1024.png`));
+
+// リロード時のブラウザによるフォーム値復元とstateの不一致を防ぐため、stateを正としてUIへ反映する
+function syncUIFromState(){
+  $('vertical').checked=state.vertical;
+  $('split').checked=state.split;
+  $('transparent').checked=state.transparent;
+  $('guide').checked=state.guide;
+  $('stampRatio').checked=false; // stateはスタンプ比率を持たない=正方形が既定
+  stage.height=$('stampRatio').checked?STAMP_H:1024;
+  $('colorA').value=state.colorA;
+  $('colorB').value=state.colorB;
+  $('bgColor').value=state.bgColor;
+  $('size').value=state.size;
+  $('imgScale').value=Math.round(state.imgScale*100);
+  $('imgX').value=state.imgX;
+  $('imgY').value=state.imgY;
+  $('threshold').value=Math.round(state.tolerance/0.9); // 許容距離→強さ0-100の逆変換
+  $('text').value=state.text;
+  $('bgPaint').checked=state.bgPaint;
+  $('thresholdCtrl').hidden=!state.transparent;
+  $('bgColorCtrl').hidden=!state.bgPaint;
+}
 
 document.fonts.ready.then(render);
-syncChips(); syncSplitUI(); render();
+syncUIFromState(); syncChips(); syncSplitUI(); render();

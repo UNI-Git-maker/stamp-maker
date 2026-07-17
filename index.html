@@ -58,10 +58,13 @@
 
     <div class="section-label">背景</div>
     <div class="row">
-      <label class="toggle"><input type="checkbox" id="transparent">白背景を透過</label>
+      <label class="toggle"><input type="checkbox" id="transparent">元の背景を消す(自動判定)</label>
+    </div>
+    <div class="ctrl" id="thresholdCtrl" hidden style="margin-top:8px">判定色 <span id="bgDetected" style="display:inline-block;width:18px;height:18px;border-radius:5px;border:2px solid #d9d2e6;background:#fff"></span> 透過の強さ <input type="range" id="threshold" min="0" max="100" value="26"></div>
+    <div class="row" style="margin-top:8px">
+      <label class="toggle"><input type="checkbox" id="bgPaint" checked>背景に色を塗る</label>
       <div class="ctrl" id="bgColorCtrl">背景色 <input type="color" id="bgColor" value="#FFFFFF"></div>
     </div>
-    <div class="ctrl" id="thresholdCtrl" hidden style="margin-top:8px">透過の強さ <input type="range" id="threshold" min="180" max="250" value="232"></div>
 
     <div class="section-label">画像の調整</div>
     <div class="ctrl">おおきさ <input type="range" id="imgScale" min="50" max="150" value="92"></div>
@@ -76,6 +79,7 @@
       <button class="btn dl sub" id="dlMain">メイン<br>240×240</button>
       <button class="btn dl sub" id="dlTab">タブ<br>96×74</button>
     </div>
+    <p class="hint">※ 元の背景は縁の色から自動判定して除去されます(「背景に色を塗る」OFFなら透過PNG)</p>
     <div class="section-label">保存 — 高画質</div>
     <button class="btn dl" id="dlFull">PNGで保存(1024px)</button>
   </div>
